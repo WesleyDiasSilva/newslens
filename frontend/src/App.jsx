@@ -1,25 +1,10 @@
 import { useState } from 'react'
 
-const BRIEFING_FICTICIO = `Resumo executivo
-Nas últimas 24 horas, o tema concentrou três movimentos principais: novos dados oficiais divulgados pela manhã, reação imediata do mercado e uma sequência de declarações de figuras políticas no fim do dia.
-
-Principais acontecimentos
-- Indicadores divulgados apontam variação fora do consenso projetado por analistas.
-- Empresas do setor anunciaram revisão de guidance para o próximo trimestre.
-- Reguladores sinalizaram nova rodada de consultas públicas nas próximas semanas.
-
-Contexto
-A discussão se intensificou após o último ciclo de decisões da autoridade competente, que mudou a expectativa sobre o ritmo de ajustes nos próximos meses.
-
-O que observar a seguir
-- Reação dos mercados na abertura do próximo pregão.
-- Falas previstas de autoridades em eventos já agendados.
-- Eventuais comunicados oficiais ao longo da semana.`
-
 function App() {
   const [tema, setTema] = useState('')
   const [carregando, setCarregando] = useState(false)
   const [briefing, setBriefing] = useState('')
+  const [erro, setErro] = useState('')
 
   const podeGerar = tema.trim().length > 0 && !carregando
 
@@ -29,11 +14,26 @@ function App() {
 
     setCarregando(true)
     setBriefing('')
+    setErro('')
 
-    await new Promise((resolve) => setTimeout(resolve, 2000))
+    try {
+      const resposta = await fetch('http://localhost:8000/api/briefing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tema: tema.trim() }),
+      })
 
-    setBriefing(BRIEFING_FICTICIO)
-    setCarregando(false)
+      if (!resposta.ok) {
+        throw new Error(`Erro ${resposta.status} ao gerar briefing.`)
+      }
+
+      const dados = await resposta.json()
+      setBriefing(dados.briefing ?? '')
+    } catch (err) {
+      setErro(err.message || 'Não foi possível gerar o briefing.')
+    } finally {
+      setCarregando(false)
+    }
   }
 
   return (
@@ -120,11 +120,15 @@ function App() {
             <div className="p-7">
               {carregando && <SkeletonBriefing />}
 
-              {!carregando && !briefing && (
+              {!carregando && erro && (
+                <p className="text-sm text-red-700">{erro}</p>
+              )}
+
+              {!carregando && !erro && !briefing && (
                 <EmptyState />
               )}
 
-              {!carregando && briefing && (
+              {!carregando && !erro && briefing && (
                 <article className="font-serif whitespace-pre-wrap text-[17px] leading-[1.7] text-stone-800">
                   {briefing}
                 </article>
