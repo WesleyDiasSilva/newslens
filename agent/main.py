@@ -2,11 +2,11 @@ import os
 import time
 from typing import Literal
 
+from anthropic import Anthropic
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from tavily import TavilyClient
 
 load_dotenv()
 
@@ -14,7 +14,28 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 if not TAVILY_API_KEY:
     raise RuntimeError("TAVILY_API_KEY não definida no .env")
 
-tavily = TavilyClient(api_key=TAVILY_API_KEY)
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+if not ANTHROPIC_API_KEY:
+    raise RuntimeError("ANTHROPIC_API_KEY não definida no .env")
+
+anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
+
+MODEL = "claude-haiku-4-5"
+MCP_BETA = "mcp-client-2025-04-04"
+
+TAVILY_MCP = {
+    "type": "url",
+    "url": "https://mcp.tavily.com/mcp/",
+    "name": "tavily",
+    "authorization_token": TAVILY_API_KEY,
+}
+
+SYSTEM_PROMPT = (
+    "Você é um agente de briefing de notícias. Quando receber um tema, "
+    "use a tool de busca do Tavily para encontrar as notícias mais recentes "
+    "e relevantes. Retorne um briefing organizado em português com título, "
+    "resumo e fonte de cada notícia. Máximo de 5 notícias."
+)
 
 app = FastAPI()
 
@@ -39,40 +60,32 @@ class BriefingRequest(BaseModel):
     modo: Literal["simples", "subagentes"] = "simples"
 
 
-def buscar_tavily(query: str) -> list[dict]:
+def extrair_texto(response) -> str:
+    partes: list[str] = []
+    for bloco in response.content:
+        if getattr(bloco, "type", None) == "text":
+            texto = getattr(bloco, "text", "")
+            if texto:
+                partes.append(texto)
+    return "\n".join(partes).strip()
+
+
+def chamar_agente(instrucao: str) -> str:
     try:
-        resposta = tavily.search(query=query, topic="news", max_results=5)
+        response = anthropic_client.beta.messages.create(
+            model=MODEL,
+            max_tokens=2048,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": instrucao}],
+            mcp_servers=[TAVILY_MCP],
+            betas=[MCP_BETA],
+        )
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Falha ao consultar Tavily: {exc}")
-    return resposta.get("results", []) if isinstance(resposta, dict) else []
-
-
-def deduplicar(resultados: list[dict]) -> list[dict]:
-    vistos: set[str] = set()
-    unicos: list[dict] = []
-    for item in resultados:
-        url = item.get("url") or ""
-        if url and url in vistos:
-            continue
-        vistos.add(url)
-        unicos.append(item)
-    return unicos
-
-
-def formatar_briefing(tema: str, resultados: list[dict]) -> str:
-    if not resultados:
-        return f"Nenhuma notícia recente encontrada sobre '{tema}'."
-
-    linhas = [f"Briefing sobre '{tema}'", ""]
-    for i, item in enumerate(resultados, start=1):
-        titulo = item.get("title") or "(sem título)"
-        resumo = item.get("content") or "(sem resumo)"
-        fonte = item.get("url") or "(sem fonte)"
-        linhas.append(f"{i}. {titulo}")
-        linhas.append(f"   Resumo: {resumo}")
-        linhas.append(f"   Fonte: {fonte}")
-        linhas.append("")
-    return "\n".join(linhas).rstrip()
+        raise HTTPException(
+            status_code=502,
+            detail=f"Falha ao consultar Anthropic: {exc}",
+        )
+    return extrair_texto(response)
 
 
 @app.post("/api/briefing")
@@ -81,23 +94,42 @@ async def criar_briefing(req: BriefingRequest):
     num_chamadas = 0
 
     if req.modo == "simples":
-        resultados = buscar_tavily(req.tema)
+        instrucao = (
+            f"Tema: {req.tema}\n\n"
+            "Faça 1 busca no Tavily sobre este tema e monte o briefing "
+            "no formato pedido."
+        )
+        briefing = chamar_agente(instrucao)
         num_chamadas = 1
     else:
-        queries = [
-            req.tema,
-            f"{req.tema} últimas notícias",
-            f"{req.tema} análise",
+        angulos = [
+            (
+                "Visão geral",
+                f"Faça 1 busca no Tavily sobre o tema '{req.tema}' (visão geral) "
+                "e liste as notícias encontradas no formato pedido.",
+            ),
+            (
+                "Últimas notícias",
+                f"Faça 1 busca no Tavily sobre '{req.tema} últimas notícias' "
+                "e liste as notícias encontradas no formato pedido.",
+            ),
+            (
+                "Análise",
+                f"Faça 1 busca no Tavily sobre '{req.tema} análise' "
+                "e liste as notícias encontradas no formato pedido.",
+            ),
         ]
-        acumulado: list[dict] = []
-        for i, q in enumerate(queries):
+        partes: list[str] = []
+        for i, (rotulo, instrucao) in enumerate(angulos):
             if i > 0:
                 time.sleep(0.5)
-            acumulado.extend(buscar_tavily(q))
+            resultado = chamar_agente(instrucao)
+            partes.append(f"## {rotulo}\n\n{resultado}")
             num_chamadas += 1
-        resultados = deduplicar(acumulado)
+        briefing = (
+            f"Briefing sobre '{req.tema}'\n\n" + "\n\n".join(partes)
+        )
 
-    briefing = formatar_briefing(req.tema, resultados)
     tempo_ms = int((time.perf_counter() - inicio) * 1000)
 
     print(
