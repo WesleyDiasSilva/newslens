@@ -21,3 +21,33 @@ Frontend React conectado a um backend FastAPI que busca notícias via Tavily.
 - Variáveis de ambiente sempre no .env — nunca hardcoded
 - .env nunca vai pro git
 - CORS liberado apenas para localhost durante desenvolvimento
+
+## Padrões de qualidade obrigatórios
+
+- Sempre escreva testes antes da implementação (TDD)
+- Nunca implemente sem spec aprovada (SDD)
+- Para tasks que envolvam mais de 2 arquivos, gere um plan antes de agir
+
+## Comportamento esperado
+
+- Se receber uma tarefa de implementação sem spec: recuse e peça a spec primeiro
+- Se receber uma tarefa de implementação sem testes: recuse e peça os testes primeiro
+- Se receber uma tarefa grande: ative plan mode automaticamente
+
+## Slash commands
+
+/plan-feature
+- Ativa plan mode
+- Lista arquivos impactados
+- Lista testes que precisam ser criados ou atualizados
+- Pausa para aprovação antes de qualquer mudança
+
+/run-tests
+- Roda a suite completa em agent/tests/
+- Reporta cada falha com localização exata e o que era esperado vs o que veio
+
+/review-pr
+- Revisa contra as convenções do CLAUDE.md
+- Aponta funções sem type hints
+- Aponta cobertura de testes abaixo do esperado
+- Aponta variáveis de ambiente hardcoded

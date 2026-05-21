@@ -1,0 +1,18 @@
+services:
+  agent:
+    build: ./agent
+    container_name: newslens-agent
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./agent/.env
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: newslens-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - agent
+    restart: unless-stopped
