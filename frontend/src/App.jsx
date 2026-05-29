@@ -36,6 +36,7 @@ function App() {
         tempo_ms: dados.tempo_ms,
         num_chamadas: dados.num_chamadas,
         modo: dados.modo,
+        memoria: dados.memoria,
       })
     } catch (err) {
       setErro(err.message || 'Não foi possível gerar o briefing.')
@@ -179,13 +180,36 @@ function App() {
                   </article>
                   {metricas && (
                     <div className="mt-6 border-t border-stone-100 pt-3 text-[11px] uppercase tracking-wider text-stone-400">
-                      <span className="font-medium text-stone-500">
-                        modo {metricas.modo}
-                      </span>
-                      <span className="mx-2 text-stone-300">·</span>
-                      <span>{metricas.num_chamadas} chamada{metricas.num_chamadas === 1 ? '' : 's'}</span>
-                      <span className="mx-2 text-stone-300">·</span>
-                      <span>{metricas.tempo_ms} ms</span>
+                      <div>
+                        <span className="font-medium text-stone-500">
+                          modo {metricas.modo}
+                        </span>
+                        <span className="mx-2 text-stone-300">·</span>
+                        <span>{metricas.num_chamadas} chamada{metricas.num_chamadas === 1 ? '' : 's'}</span>
+                        <span className="mx-2 text-stone-300">·</span>
+                        <span>{metricas.tempo_ms} ms</span>
+                      </div>
+                      {metricas.memoria && (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-2">
+                          <span className="font-medium text-stone-500">memória</span>
+                          <span
+                            aria-label={metricas.memoria.disponivel ? 'memória disponível' : 'memória indisponível'}
+                            title={metricas.memoria.disponivel ? 'memória disponível' : 'memória indisponível'}
+                            className={
+                              'inline-block h-2 w-2 rounded-full ' +
+                              (metricas.memoria.disponivel ? 'bg-emerald-500' : 'bg-red-500')
+                            }
+                          />
+                          <span className="text-stone-300">·</span>
+                          <span>1ª vez {metricas.memoria.primeira_vez ? 'sim' : 'não'}</span>
+                          <span className="text-stone-300">·</span>
+                          <span>
+                            {metricas.memoria.briefings_anteriores_consultados} anterior{metricas.memoria.briefings_anteriores_consultados === 1 ? '' : 'es'}
+                          </span>
+                          <span className="text-stone-300">·</span>
+                          <span>desde {formatarData(metricas.memoria.data_briefing_mais_antigo)}</span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
@@ -201,6 +225,21 @@ function App() {
       </div>
     </div>
   )
+}
+
+function formatarData(iso) {
+  if (!iso) return '—'
+  try {
+    const d = new Date(iso + 'T00:00:00')
+    if (Number.isNaN(d.getTime())) return iso
+    return d.toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    })
+  } catch {
+    return iso
+  }
 }
 
 function ArrowIcon() {
