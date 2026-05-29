@@ -4,3 +4,6 @@ anthropic
 python-dotenv
 pytest
 httpx
+pgvector
+psycopg2-binary
+openai
