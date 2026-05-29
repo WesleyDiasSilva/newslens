@@ -13,16 +13,32 @@ A memória é uma camada de contexto. Ela não substitui a busca de notícias do
 - O histórico de briefings anteriores associados ao mesmo tema, quando existir.
 - A data/hora da consulta atual.
 
+**Validação:** `tema` vazio ou contendo apenas espaços em branco é rejeitado com HTTP 422 antes de qualquer processamento (não consome tokens nem hit no banco).
+
 ## Outputs
 
 - Um briefing no formato já existente (título, resumo, fonte por notícia), acrescido de:
   - Marcação por notícia indicando se é **inédita** ou **continuação** de algo já reportado.
   - Uma seção de **mudanças desde o último briefing**: fatos que evoluíram, foram contraditos ou atualizados.
   - Referências explícitas a briefings anteriores quando uma notícia atual estiver diretamente conectada a uma notícia passada.
-- Metadados na resposta indicando:
-  - Quantos briefings anteriores foram consultados.
-  - A data do briefing mais antigo considerado.
-  - Se foi a primeira vez que o tema foi consultado.
+- Metadados de memória sob a chave `memoria` na resposta, com as seguintes chaves:
+  - `briefings_anteriores_consultados` (int ≥ 0): quantidade **total** de briefings persistidos para o mesmo tema normalizado.
+  - `primeira_vez` (bool): `true` se e somente se `briefings_anteriores_consultados == 0`.
+  - `data_briefing_mais_antigo` (string ISO date ou `null`): data do briefing persistido mais antigo do mesmo tema; `null` se não houver histórico.
+  - `disponivel` (bool): `true` se a camada de memória respondeu sem erro; `false` em modo de fallback (banco indisponível, falha de embedding, etc.).
+
+## Arquitetura
+
+- **Banco:** PostgreSQL com a extensão PGVector instalada (`CREATE EXTENSION vector`). A tabela `briefings` armazena `tema`, `conteudo`, `embedding vector(1536)` e `criado_em`.
+- **Modelo de embedding:** OpenAI `text-embedding-3-small`, gerando vetores de **1536 dimensões** — mesma dimensionalidade configurada na coluna `embedding`.
+- **Busca:** similaridade por **distância coseno** via operador `<=>` do pgvector (`ORDER BY embedding <=> query_vec`), ordenando do mais próximo (semanticamente similar) para o mais distante.
+- **Ingestão:** cada briefing gerado pelo endpoint é automaticamente indexado — o `conteudo` é convertido em embedding e persistido em uma única transação ao final da geração, antes do retorno HTTP.
+- **Escopo da memória:** **exclusivo por tema normalizado**. Temas distintos nunca compartilham memória — nem para contagem, nem para retrieval.
+- **Normalização de tema:** `lower()` + `strip()` aplicados antes de qualquer comparação ou agregação. Variações triviais (caixa, espaços nas bordas) compartilham memória; variações estruturais (`"eleições"` vs `"eleições 2026"`) são temas distintos. Acentos e caracteres unicode são preservados (`"café"` ≠ `"cafe"`).
+- **Contagem de histórico:** o campo `briefings_anteriores_consultados` reflete o **total** de briefings persistidos para o mesmo tema normalizado, **independente** de quantos são injetados no prompt do agente.
+- **Retrieval para o prompt:** dentro do subconjunto de mesmo tema normalizado, os **top-3 mais similares** semanticamente (via `embedding <=> query_vec`) são selecionados e injetados no contexto do agente. Se o subconjunto tem ≤ 3 briefings, todos são injetados.
+- **Chunking:** o **briefing completo é a unidade de indexação** — um único chunk por briefing, sem split por seção ou notícia. Preserva o contexto narrativo do briefing como um todo durante o retrieval.
+- **Resiliência:** a camada de memória é encapsulada em um handle único e patchável no módulo `main` (atributo do módulo), permitindo substituição em testes e fallback em produção. Se a camada falhar (banco indisponível, erro de embedding), o endpoint executa em **fallback**: gera o briefing sem contexto histórico e retorna `memoria.disponivel = false`. O briefing é sempre entregue.
 
 ## Comportamentos esperados
 
@@ -49,6 +65,7 @@ A memória é uma camada de contexto. Ela não substitui a busca de notícias do
 - **Notícia atual que contradiz briefing anterior:** ambas devem aparecer; a contradição deve ser sinalizada.
 - **Notícia idêntica à de um briefing recente:** deve ser marcada como continuação, não como novidade.
 - **Memória indisponível ou corrompida:** o briefing atual sai normalmente, com aviso nos metadados de que a memória não pôde ser consultada.
-- **Histórico muito longo:** o sistema deve priorizar os briefings mais recentes e/ou mais relevantes, sem travar nem estourar limites do modelo.
+- **Tema vazio ou só espaços:** rejeitado com HTTP 422 antes de qualquer processamento; não consome tokens nem hit no banco.
+- **Histórico grande (>20 briefings do mesmo tema):** `briefings_anteriores_consultados` reflete o total real (≥ 20); o retrieval injetado no prompt continua limitado a top-3 mais similares; o briefing atual sai sem latência adicional significativa.
 - **Briefings antigos ficaram irrelevantes** (ex.: tema mudou de fase): devem continuar acessíveis, mas o agente deve sinalizar quando estiver tratando de algo claramente novo dentro do mesmo tema.
-- **Dois pedidos simultâneos para o mesmo tema:** ambos devem completar sem corromper a memória; a ordem de persistência deve refletir a ordem real de execução.
+- **Concorrência de mesmo tema:** múltiplas requisições simultâneas são serializadas pela transação de INSERT no Postgres; todas devem completar com HTTP 200 sem corromper a memória, e a contagem final reflete a ordem real de persistência.
