@@ -34,7 +34,7 @@ SEARCH_SYSTEM = (
     "título, resumo e fonte de cada notícia. Não monte briefing formatado."
 )
 
-QUALIDADE_MINIMA_CHARS = 200
+QUALIDADE_MINIMA_CHARS = 2500
 
 
 def buscar_noticias(state: NewsLensState) -> dict:
@@ -47,12 +47,13 @@ def buscar_noticias(state: NewsLensState) -> dict:
 
 
 def avaliar_qualidade(state: NewsLensState) -> dict:
-    return {
-        "qualidade_suficiente": len(state.get("noticias", "")) >= QUALIDADE_MINIMA_CHARS
-    }
+    resultado = len(state.get("noticias", "")) >= QUALIDADE_MINIMA_CHARS
+    print(f"[grafo] avaliar_qualidade: {len(state.get('noticias', ''))} chars → {'suficiente' if resultado else 'insuficiente'}")
+    return {"qualidade_suficiente": resultado}
 
 
 def refinar_busca(state: NewsLensState) -> dict:
+    print(f"[grafo] refinar_busca: refinando busca para '{state['tema']} últimas notícias'")
     instrucao = (
         f"Tema: {state['tema']} últimas notícias\n\n"
         "Faça 1 busca ampliada no Tavily e retorne as notícias encontradas."

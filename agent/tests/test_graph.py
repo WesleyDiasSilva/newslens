@@ -38,22 +38,22 @@ class TestRouteQualidade:
 
 
 class TestAvaliarQualidade:
-    def test_acima_de_200_chars_marca_true(self):
+    def test_acima_de_2500_chars_marca_true(self):
         from graph import avaliar_qualidade
 
-        out = avaliar_qualidade({"noticias": "x" * 250})
+        out = avaliar_qualidade({"noticias": "x" * 3000})
         assert out["qualidade_suficiente"] is True
 
-    def test_abaixo_de_200_chars_marca_false(self):
+    def test_abaixo_de_2500_chars_marca_false(self):
         from graph import avaliar_qualidade
 
-        out = avaliar_qualidade({"noticias": "x" * 100})
+        out = avaliar_qualidade({"noticias": "x" * 1000})
         assert out["qualidade_suficiente"] is False
 
-    def test_borda_exatos_200_chars_marca_true(self):
+    def test_borda_exatos_2500_chars_marca_true(self):
         from graph import avaliar_qualidade
 
-        out = avaliar_qualidade({"noticias": "x" * 200})
+        out = avaliar_qualidade({"noticias": "x" * 2500})
         assert out["qualidade_suficiente"] is True
 
 
