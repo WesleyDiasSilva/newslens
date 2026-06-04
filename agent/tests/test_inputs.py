@@ -7,7 +7,7 @@ def test_payload_minimo_valido_retorna_200(client):
 
 
 def test_payload_sem_tema_retorna_422(client):
-    resp = client.post("/api/briefing", json={"modo": "simples"})
+    resp = client.post("/api/briefing", json={})
     assert resp.status_code == 422
 
 
@@ -19,30 +19,6 @@ def test_payload_com_tema_vazio_retorna_422(client):
 def test_payload_com_tema_so_espacos_retorna_422(client):
     resp = client.post("/api/briefing", json={"tema": "   "})
     assert resp.status_code == 422
-
-
-def test_modo_invalido_retorna_422(client):
-    resp = client.post(
-        "/api/briefing",
-        json={"tema": "ações Petrobras", "modo": "turbo"},
-    )
-    assert resp.status_code == 422
-
-
-def test_modo_simples_aceito(client):
-    resp = client.post(
-        "/api/briefing",
-        json={"tema": "Selic", "modo": "simples"},
-    )
-    assert resp.status_code == 200
-
-
-def test_modo_subagentes_aceito(client):
-    resp = client.post(
-        "/api/briefing",
-        json={"tema": "Selic", "modo": "subagentes"},
-    )
-    assert resp.status_code == 200
 
 
 def test_payload_nao_json_retorna_422(client):

@@ -2,7 +2,6 @@ import { useState } from 'react'
 
 function App() {
   const [tema, setTema] = useState('')
-  const [modo, setModo] = useState('simples')
   const [carregando, setCarregando] = useState(false)
   const [briefing, setBriefing] = useState('')
   const [metricas, setMetricas] = useState(null)
@@ -23,7 +22,7 @@ function App() {
       const resposta = await fetch('http://localhost:8000/api/briefing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tema: tema.trim(), modo }),
+        body: JSON.stringify({ tema: tema.trim() }),
       })
 
       if (!resposta.ok) {
@@ -35,7 +34,6 @@ function App() {
       setMetricas({
         tempo_ms: dados.tempo_ms,
         num_chamadas: dados.num_chamadas,
-        modo: dados.modo,
         memoria: dados.memoria,
       })
     } catch (err) {
@@ -74,45 +72,9 @@ function App() {
         </header>
 
         <form onSubmit={gerarBriefing} className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="block text-xs font-semibold uppercase tracking-wider text-stone-500">
-              Modo
-            </span>
-          </div>
-          <div
-            role="radiogroup"
-            aria-label="Modo de geração"
-            className="inline-flex rounded-lg border border-stone-300 bg-white p-1 shadow-sm"
-          >
-            {[
-              { id: 'simples', label: 'Simples' },
-              { id: 'subagentes', label: 'Subagentes' },
-            ].map((opcao) => {
-              const ativo = modo === opcao.id
-              return (
-                <button
-                  key={opcao.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={ativo}
-                  disabled={carregando}
-                  onClick={() => setModo(opcao.id)}
-                  className={
-                    'rounded-md px-4 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed ' +
-                    (ativo
-                      ? 'bg-stone-900 text-stone-50 shadow-sm'
-                      : 'text-stone-600 hover:text-stone-900')
-                  }
-                >
-                  {opcao.label}
-                </button>
-              )
-            })}
-          </div>
-
           <label
             htmlFor="tema"
-            className="block pt-2 text-xs font-semibold uppercase tracking-wider text-stone-500"
+            className="block text-xs font-semibold uppercase tracking-wider text-stone-500"
           >
             Tema
           </label>
@@ -181,10 +143,6 @@ function App() {
                   {metricas && (
                     <div className="mt-6 border-t border-stone-100 pt-3 text-[11px] uppercase tracking-wider text-stone-400">
                       <div>
-                        <span className="font-medium text-stone-500">
-                          modo {metricas.modo}
-                        </span>
-                        <span className="mx-2 text-stone-300">·</span>
                         <span>{metricas.num_chamadas} chamada{metricas.num_chamadas === 1 ? '' : 's'}</span>
                         <span className="mx-2 text-stone-300">·</span>
                         <span>{metricas.tempo_ms} ms</span>

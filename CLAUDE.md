@@ -9,6 +9,7 @@ Frontend React conectado a um backend FastAPI que busca notícias via Tavily.
 - Backend: Python + FastAPI + Uvicorn
 - Busca: Tavily API
 - Banco vetorial: PGVector via Docker (a partir da Aula 3)
+- Agente: LangGraph (a partir da Aula 4) — grafo de estados explícito com conditional edges, checkpointing via PostgresSaver e human-in-the-loop
 - Observabilidade: LangFuse (a partir da Aula 5)
 
 ## Estrutura

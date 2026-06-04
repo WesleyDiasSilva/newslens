@@ -7,3 +7,4 @@ httpx
 pgvector
 psycopg2-binary
 openai
+langgraph

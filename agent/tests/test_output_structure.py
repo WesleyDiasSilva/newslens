@@ -5,8 +5,8 @@ metadados de memória.
 """
 
 
-def _post(client, tema="dolar", modo="simples"):
-    resp = client.post("/api/briefing", json={"tema": tema, "modo": modo})
+def _post(client, tema="dolar"):
+    resp = client.post("/api/briefing", json={"tema": tema})
     assert resp.status_code == 200
     return resp.json()
 
@@ -16,7 +16,6 @@ def test_campos_originais_presentes(client):
     assert "briefing" in body
     assert "tempo_ms" in body
     assert "num_chamadas" in body
-    assert "modo" in body
 
 
 def test_briefing_e_string_nao_vazia(client):

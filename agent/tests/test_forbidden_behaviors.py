@@ -2,8 +2,8 @@
 import re
 
 
-def _post(client, tema, modo="simples"):
-    resp = client.post("/api/briefing", json={"tema": tema, "modo": modo})
+def _post(client, tema):
+    resp = client.post("/api/briefing", json={"tema": tema})
     assert resp.status_code == 200
     return resp.json()
 

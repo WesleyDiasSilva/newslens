@@ -8,7 +8,7 @@ A memória é uma camada de contexto. Ela não substitui a busca de notícias do
 
 ## Inputs
 
-- Um pedido de briefing contendo `tema` e `modo` (igual ao endpoint atual).
+- Um pedido de briefing contendo `tema`.
 - O conjunto de notícias coletadas na execução corrente.
 - O histórico de briefings anteriores associados ao mesmo tema, quando existir.
 - A data/hora da consulta atual.
@@ -69,3 +69,61 @@ A memória é uma camada de contexto. Ela não substitui a busca de notícias do
 - **Histórico grande (>20 briefings do mesmo tema):** `briefings_anteriores_consultados` reflete o total real (≥ 20); o retrieval injetado no prompt continua limitado a top-3 mais similares; o briefing atual sai sem latência adicional significativa.
 - **Briefings antigos ficaram irrelevantes** (ex.: tema mudou de fase): devem continuar acessíveis, mas o agente deve sinalizar quando estiver tratando de algo claramente novo dentro do mesmo tema.
 - **Concorrência de mesmo tema:** múltiplas requisições simultâneas são serializadas pela transação de INSERT no Postgres; todas devem completar com HTTP 200 sem corromper a memória, e a contagem final reflete a ordem real de persistência.
+
+---
+
+# SPEC — Grafo de execução (LangGraph)
+
+## Visão geral
+
+A partir da Aula 4, o fluxo de geração de briefing é modelado como um **grafo de estados explícito** usando LangGraph. O objetivo é separar busca, avaliação de qualidade, refinamento, recuperação de memória e geração em nodes discretos, com routing condicional baseado no estado — em vez de uma única chamada monolítica ao Claude com prompt único.
+
+Esta versão usa `MemorySaver` como checkpointer (estado em memória, perdido entre processos). A migração para `PostgresSaver` (estado persistido por `thread_id`) é prevista, mas fica como TODO até a Aula 5+.
+
+## State
+
+```python
+class NewsLensState(TypedDict):
+    tema: str                                    # input: tema do briefing
+    noticias: str                                # output do node de busca (bruto)
+    qualidade_suficiente: bool                   # output do node de avaliação
+    historico: list                              # top-N briefings similares
+    briefing: str                                # output final
+    memoria: dict                                # metadados (mesma chave do endpoint)
+    num_chamadas: Annotated[int, operator.add]   # soma das chamadas LLM dos nodes
+```
+
+`num_chamadas` usa reducer `operator.add` para que cada node que chama LLM possa contribuir com `+1` ao total final (default: sobrescrita; com reducer: soma).
+
+## Nodes
+
+1. **`buscar_noticias`** — Chama o Claude com MCP do Tavily passando o `tema` do state. Retorna as notícias brutas (sem montar briefing). Popula `state.noticias` e contribui `num_chamadas += 1`.
+2. **`avaliar_qualidade`** — Heurística simples: `qualidade_suficiente = len(state.noticias) >= 200`. Não chama LLM. Popula `state.qualidade_suficiente`.
+3. **`refinar_busca`** — Refaz a busca com tema acrescido de `" últimas notícias"` para ampliar o resultado. Mesma estrutura de `buscar_noticias`. Sobrescreve `state.noticias` e contribui `num_chamadas += 1`.
+4. **`recuperar_historico`** — Chama `main.memory_store.get(tema)` (handle único da camada de memória, patchável em testes). Popula `state.historico` (top-3) e `state.memoria` (metadados completos). Em caso de exceção, faz fallback: `historico=[]`, `memoria.disponivel=False`, contadores zerados.
+5. **`gerar_briefing`** — Monta o system prompt (com ou sem histórico, usando `RAG_INSTRUCOES` + contexto quando aplicável) e chama o Claude para produzir o briefing final a partir das notícias já coletadas no state. Popula `state.briefing` e contribui `num_chamadas += 1`.
+6. **`salvar_briefing`** — Chama `main.memory_store.add(tema, briefing)` para persistir o briefing recém-gerado. Em caso de exceção, rebaixa `state.memoria.disponivel = False` mantendo os demais campos. Não chama LLM.
+
+## Edges
+
+```
+START → buscar_noticias → avaliar_qualidade → (conditional)
+  ├─ qualidade_suficiente=True  → recuperar_historico → gerar_briefing → salvar_briefing → END
+  └─ qualidade_suficiente=False → refinar_busca → recuperar_historico → gerar_briefing → salvar_briefing → END
+```
+
+A conditional edge é resolvida pela função:
+
+```python
+def route_qualidade(state) -> str:
+    return "recuperar_historico" if state["qualidade_suficiente"] else "refinar_busca"
+```
+
+## Checkpointer
+
+- **Atual:** `MemorySaver` — estado em memória, válido apenas durante o processo. Suficiente para desenvolvimento e testes.
+- **Futuro:** `PostgresSaver` apontando para a mesma instância PG do `memory.py`. Permite resumir execuções interrompidas e human-in-the-loop entre nodes. Marcado como TODO no código.
+
+## Integração com `main.py`
+
+O endpoint `POST /api/briefing` usa `graph.invoke(input_state, config={"configurable": {"thread_id": req.tema}})` onde `input_state = {"tema": req.tema}`. A camada de memória continua sendo acessada via o handle `main.memory_store` (preservado para que `test_memoria_indisponivel_nao_bloqueia_briefing` possa patcheá-lo). O grafo é compilado uma única vez no nível do módulo (`graph = build_graph()`).

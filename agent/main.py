@@ -1,6 +1,5 @@
 import os
 import time
-from typing import Literal
 
 from anthropic import Anthropic
 from dotenv import load_dotenv
@@ -16,6 +15,9 @@ from memory import (
     search_similar,  # noqa: F401  (kept for backwards-compat / external imports)
     search_similar_por_tema,
 )
+# `from graph import build_graph` é importado no fim do módulo, após
+# memory_store / chamar_agente / SYSTEM_PROMPT estarem definidos —
+# graph.py importa main e acessa esses símbolos.
 
 load_dotenv()
 
@@ -114,7 +116,6 @@ def _startup_init_db() -> None:
 
 class BriefingRequest(BaseModel):
     tema: str
-    modo: Literal["simples", "subagentes"] = "simples"
 
     @field_validator("tema")
     @classmethod
@@ -163,96 +164,44 @@ def _montar_contexto_historico(briefings: list[dict]) -> str:
     return "Briefings anteriores sobre este tema:\n\n" + "\n\n".join(blocos)
 
 
+from graph import build_graph
+
+graph = build_graph()
+
+
+_MEMORIA_FALLBACK = {
+    "briefings_anteriores_consultados": 0,
+    "primeira_vez": True,
+    "data_briefing_mais_antigo": None,
+    "disponivel": False,
+}
+
+
 @app.post("/api/briefing")
-async def criar_briefing(req: BriefingRequest):
+def criar_briefing(req: BriefingRequest):
     inicio = time.perf_counter()
-    num_chamadas = 0
 
-    memoria_disponivel = True
-    historico_dados: dict = {"total": 0, "mais_antigo": None, "top_n": []}
-    try:
-        historico_dados = memory_store.get(req.tema)
-    except Exception:
-        memoria_disponivel = False
-
-    historico = historico_dados["top_n"]
-    if historico:
-        system_prompt = (
-            SYSTEM_PROMPT
-            + RAG_INSTRUCOES
-            + "\n\n"
-            + _montar_contexto_historico(historico)
-        )
-    else:
-        system_prompt = SYSTEM_PROMPT
-
-    if req.modo == "simples":
-        instrucao = (
-            f"Tema: {req.tema}\n\n"
-            "Faça 1 busca no Tavily sobre este tema e monte o briefing "
-            "no formato pedido."
-        )
-        briefing = chamar_agente(instrucao, system_prompt)
-        num_chamadas = 1
-    else:
-        angulos = [
-            (
-                "Visão geral",
-                f"Faça 1 busca no Tavily sobre o tema '{req.tema}' (visão geral) "
-                "e liste as notícias encontradas no formato pedido.",
-            ),
-            (
-                "Últimas notícias",
-                f"Faça 1 busca no Tavily sobre '{req.tema} últimas notícias' "
-                "e liste as notícias encontradas no formato pedido.",
-            ),
-            (
-                "Análise",
-                f"Faça 1 busca no Tavily sobre '{req.tema} análise' "
-                "e liste as notícias encontradas no formato pedido.",
-            ),
-        ]
-        partes: list[str] = []
-        for i, (rotulo, instrucao) in enumerate(angulos):
-            if i > 0:
-                time.sleep(0.5)
-            resultado = chamar_agente(instrucao, system_prompt)
-            partes.append(f"## {rotulo}\n\n{resultado}")
-            num_chamadas += 1
-        briefing = (
-            f"Briefing sobre '{req.tema}'\n\n" + "\n\n".join(partes)
-        )
-
-    try:
-        memory_store.add(req.tema, briefing)
-    except Exception:
-        memoria_disponivel = False
+    input_state = {"tema": req.tema, "num_chamadas": 0}
+    config = {"configurable": {"thread_id": req.tema}}
+    resultado = graph.invoke(input_state, config=config)
 
     tempo_ms = int((time.perf_counter() - inicio) * 1000)
 
-    mais_antigo = historico_dados["mais_antigo"]
-    data_briefing_mais_antigo = (
-        mais_antigo.date().isoformat() if mais_antigo is not None else None
-    )
+    memoria_out = resultado.get("memoria") or dict(_MEMORIA_FALLBACK)
+    num_chamadas = resultado.get("num_chamadas", 0)
 
     print(
-        f"[briefing] modo={req.modo} tema={req.tema!r} "
-        f"chamadas={num_chamadas} briefings_anteriores={historico_dados['total']} "
-        f"disponivel={memoria_disponivel} tempo_ms={tempo_ms}",
+        f"[briefing] tema={req.tema!r} chamadas={num_chamadas} "
+        f"briefings_anteriores={memoria_out.get('briefings_anteriores_consultados', 0)} "
+        f"disponivel={memoria_out.get('disponivel', False)} tempo_ms={tempo_ms}",
         flush=True,
     )
 
     return {
-        "briefing": briefing,
+        "briefing": resultado.get("briefing", ""),
         "tempo_ms": tempo_ms,
         "num_chamadas": num_chamadas,
-        "modo": req.modo,
-        "memoria": {
-            "briefings_anteriores_consultados": historico_dados["total"],
-            "primeira_vez": historico_dados["total"] == 0,
-            "data_briefing_mais_antigo": data_briefing_mais_antigo,
-            "disponivel": memoria_disponivel,
-        },
+        "memoria": memoria_out,
     }
 
 
