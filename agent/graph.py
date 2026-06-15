@@ -13,6 +13,7 @@ from typing import Annotated, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+from langgraph.types import interrupt
 
 from langfuse.langchain import CallbackHandler
 
@@ -70,8 +71,21 @@ def recuperar_historico(state: NewsLensState) -> dict:
     tema = state["tema"]
     try:
         dados = main.memory_store.get(tema)
+        mais_antigo = dados["mais_antigo"]
+        data_briefing_mais_antigo = (
+            mais_antigo.date().isoformat() if mais_antigo is not None else None
+        )
+        update = {
+            "historico": dados["top_n"],
+            "memoria": {
+                "briefings_anteriores_consultados": dados["total"],
+                "primeira_vez": dados["total"] == 0,
+                "data_briefing_mais_antigo": data_briefing_mais_antigo,
+                "disponivel": True,
+            },
+        }
     except Exception:
-        return {
+        update = {
             "historico": [],
             "memoria": {
                 "briefings_anteriores_consultados": 0,
@@ -80,19 +94,13 @@ def recuperar_historico(state: NewsLensState) -> dict:
                 "disponivel": False,
             },
         }
-    mais_antigo = dados["mais_antigo"]
-    data_briefing_mais_antigo = (
-        mais_antigo.date().isoformat() if mais_antigo is not None else None
-    )
-    return {
-        "historico": dados["top_n"],
-        "memoria": {
-            "briefings_anteriores_consultados": dados["total"],
-            "primeira_vez": dados["total"] == 0,
-            "data_briefing_mais_antigo": data_briefing_mais_antigo,
-            "disponivel": True,
-        },
-    }
+
+    # HITL: pausa antes de gastar tokens na geração. O grafo retoma via
+    # graph.invoke(None, config={"configurable": {"thread_id": ...}}) e o
+    # node re-executa do começo na retomada — memory_store.get é só leitura,
+    # então re-rodar é seguro.
+    interrupt({"noticias": state.get("noticias", ""), "memoria": update["memoria"]})
+    return update
 
 
 def gerar_briefing(state: NewsLensState) -> dict:

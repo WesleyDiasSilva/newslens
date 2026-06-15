@@ -3,12 +3,11 @@
 Conforme a SPEC, a resposta deve incluir, além dos campos atuais,
 metadados de memória.
 """
+from tests.conftest import fluxo_completo
 
 
 def _post(client, tema="dolar"):
-    resp = client.post("/api/briefing", json={"tema": tema})
-    assert resp.status_code == 200
-    return resp.json()
+    return fluxo_completo(client, tema)
 
 
 def test_campos_originais_presentes(client):

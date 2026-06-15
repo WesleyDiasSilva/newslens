@@ -1,10 +1,9 @@
 """Comportamentos esperados conforme a SPEC."""
+from tests.conftest import fluxo_completo
 
 
 def _post(client, tema):
-    resp = client.post("/api/briefing", json={"tema": tema})
-    assert resp.status_code == 200
-    return resp.json()
+    return fluxo_completo(client, tema)
 
 
 def test_primeira_consulta_marca_primeira_vez_true(client):

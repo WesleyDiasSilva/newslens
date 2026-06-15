@@ -127,3 +127,74 @@ def route_qualidade(state) -> str:
 ## Integração com `main.py`
 
 O endpoint `POST /api/briefing` usa `graph.invoke(input_state, config={"configurable": {"thread_id": req.tema}})` onde `input_state = {"tema": req.tema}`. A camada de memória continua sendo acessada via o handle `main.memory_store` (preservado para que `test_memoria_indisponivel_nao_bloqueia_briefing` possa patcheá-lo). O grafo é compilado uma única vez no nível do módulo (`graph = build_graph()`).
+
+---
+
+# SPEC — Human-in-the-loop (HITL)
+
+## Visão geral
+
+A partir da Aula 5, antes de gastar tokens com a geração do briefing final, o grafo **pausa** depois de coletar as notícias e recuperar o histórico, e aguarda **aprovação humana** para prosseguir. O objetivo é dar visibilidade ao operador sobre as notícias que serão usadas, e dar a chance de descartar a execução quando o material coletado for inadequado.
+
+A pausa é feita via `interrupt()` do LangGraph; a retomada usa `Command(resume=...)` no mesmo `thread_id`. O checkpointer (`MemorySaver` por enquanto) garante que o estado intermediário é preservado entre as duas requisições HTTP.
+
+## Inputs
+
+- `POST /api/briefing` — payload `{tema}`, igual ao fluxo anterior.
+- `POST /api/briefing/retomar` — payload `{thread_id}`. O `thread_id` é o opaco devolvido pelo `/briefing` quando a execução pausou; reusá-lo retoma a mesma thread no checkpoint.
+
+**Validação:**
+- `tema` segue a regra anterior (vazio ou só espaços → 422).
+- `thread_id` ausente ou vazio em `/retomar` → 422 antes de qualquer hit no grafo.
+
+## Outputs
+
+### `POST /api/briefing` quando pausa
+```json
+{
+  "status": "aguardando_aprovacao",
+  "noticias": "<bloco bruto de notícias coletadas>",
+  "thread_id": "<string opaca>",
+  "tempo_ms": 12345,
+  "memoria": { ... mesmos campos da spec anterior ... }
+}
+```
+- `briefing` **não** é incluído nesta resposta.
+- `num_chamadas` reflete só o que foi consumido até o ponto da pausa (1 ou 2: busca + eventual refinamento).
+
+### `POST /api/briefing/retomar` quando retoma com sucesso
+Mesmo schema do briefing final atual:
+```json
+{
+  "briefing": "<texto>",
+  "tempo_ms": 23456,
+  "num_chamadas": 1,
+  "memoria": { ... }
+}
+```
+- `tempo_ms` mede só a fase pós-retomada (geração + persistência).
+- `num_chamadas` reflete só a chamada de `gerar_briefing` (não soma com a fase anterior).
+
+## Ponto de interrupção
+
+O `interrupt()` é colocado **dentro do node `recuperar_historico`**, após popular `historico` e `memoria` no state e antes de devolver controle para `gerar_briefing`. O valor passado ao `interrupt()` é um dict com:
+- `noticias` — bloco bruto coletado.
+- `memoria` — metadados de memória já consolidados.
+
+## Comportamentos esperados
+
+- `/briefing` com pedido novo pausa, devolve `aguardando_aprovacao` e expõe o `thread_id`.
+- `/briefing/retomar` com `thread_id` válido prossegue do ponto da pausa, gera o briefing, persiste e devolve o resultado.
+- O frontend exibe as notícias coletadas e um botão "Aprovar e gerar briefing" enquanto o status for `aguardando_aprovacao`.
+- Retomar **não** re-executa busca nem refinamento — só `gerar_briefing` e `salvar_briefing`.
+
+## Comportamentos proibidos
+
+- Devolver `briefing` na resposta de pausa.
+- Aceitar `/retomar` sem `thread_id`.
+- Reutilizar um `thread_id` já concluído como se ainda estivesse pausado.
+
+## Casos de borda
+
+- **`/retomar` com `thread_id` desconhecido ou já concluído:** retorna HTTP 404 com mensagem explícita; nenhum token é consumido.
+- **Erro durante a geração na retomada:** propaga 502 igual à geração normal; o checkpoint não é alterado e o operador pode tentar retomar de novo.

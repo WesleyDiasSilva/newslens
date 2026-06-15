@@ -2,12 +2,11 @@
 from unittest.mock import patch
 
 import main
+from tests.conftest import fluxo_completo
 
 
 def _post(client, tema):
-    resp = client.post("/api/briefing", json={"tema": tema})
-    assert resp.status_code == 200
-    return resp.json()
+    return fluxo_completo(client, tema)
 
 
 def test_primeira_consulta_de_tema_funciona_sem_historico(client):
@@ -52,11 +51,18 @@ def test_memoria_indisponivel_nao_bloqueia_briefing(client):
         assert False, "main deve expor um store de memória patchável"
 
     with patch.object(main, target_attr, fake_store):
-        resp = client.post(
-            "/api/briefing", json={"tema": "fallback test"}
+        pausa = client.post("/api/briefing", json={"tema": "fallback test"})
+        assert pausa.status_code == 200
+        body_pausa = pausa.json()
+        assert body_pausa["status"] == "aguardando_aprovacao"
+        assert body_pausa["memoria"]["disponivel"] is False
+
+        retoma = client.post(
+            "/api/briefing/retomar",
+            json={"thread_id": body_pausa["thread_id"]},
         )
-    assert resp.status_code == 200
-    body = resp.json()
+    assert retoma.status_code == 200
+    body = retoma.json()
     assert body["briefing"]
     assert body["memoria"]["disponivel"] is False
 
@@ -73,17 +79,14 @@ def test_consultas_concorrentes_no_mesmo_tema_completam(client):
     import concurrent.futures
 
     def chamar():
-        resp = client.post(
-            "/api/briefing", json={"tema": "concorrência"}
-        )
-        return resp.status_code
+        body = fluxo_completo(client, "concorrência")
+        return bool(body.get("briefing"))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
         resultados = list(ex.map(lambda _: chamar(), range(5)))
-    assert all(s == 200 for s in resultados)
+    assert all(resultados)
 
     body = _post(client, "concorrência")
-    # 5 concorrentes + sanity check anterior = pelo menos 5 anteriores.
     assert body["memoria"]["briefings_anteriores_consultados"] >= 5
 
 

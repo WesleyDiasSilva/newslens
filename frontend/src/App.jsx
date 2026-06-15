@@ -6,17 +6,24 @@ function App() {
   const [briefing, setBriefing] = useState('')
   const [metricas, setMetricas] = useState(null)
   const [erro, setErro] = useState('')
+  const [pendente, setPendente] = useState(null)
 
-  const podeGerar = tema.trim().length > 0 && !carregando
+  const podeGerar = tema.trim().length > 0 && !carregando && !pendente
+  const aguardandoAprovacao = pendente !== null
+
+  function resetarEstado() {
+    setBriefing('')
+    setMetricas(null)
+    setErro('')
+    setPendente(null)
+  }
 
   async function gerarBriefing(event) {
     event.preventDefault()
     if (!podeGerar) return
 
     setCarregando(true)
-    setBriefing('')
-    setMetricas(null)
-    setErro('')
+    resetarEstado()
 
     try {
       const resposta = await fetch('http://localhost:8000/api/briefing', {
@@ -30,17 +37,63 @@ function App() {
       }
 
       const dados = await resposta.json()
+      if (dados.status === 'aguardando_aprovacao') {
+        setPendente({
+          thread_id: dados.thread_id,
+          noticias: dados.noticias ?? '',
+          memoria: dados.memoria ?? null,
+        })
+      } else {
+        setBriefing(dados.briefing ?? '')
+        setMetricas({
+          tempo_ms: dados.tempo_ms,
+          num_chamadas: dados.num_chamadas,
+          memoria: dados.memoria,
+        })
+      }
+    } catch (err) {
+      setErro(err.message || 'Não foi possível gerar o briefing.')
+    } finally {
+      setCarregando(false)
+    }
+  }
+
+  async function aprovarEContinuar() {
+    if (!pendente || carregando) return
+    setCarregando(true)
+    setErro('')
+
+    try {
+      const resposta = await fetch(
+        'http://localhost:8000/api/briefing/retomar',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ thread_id: pendente.thread_id }),
+        },
+      )
+
+      if (!resposta.ok) {
+        throw new Error(`Erro ${resposta.status} ao retomar briefing.`)
+      }
+
+      const dados = await resposta.json()
       setBriefing(dados.briefing ?? '')
       setMetricas({
         tempo_ms: dados.tempo_ms,
         num_chamadas: dados.num_chamadas,
         memoria: dados.memoria,
       })
+      setPendente(null)
     } catch (err) {
-      setErro(err.message || 'Não foi possível gerar o briefing.')
+      setErro(err.message || 'Não foi possível retomar o briefing.')
     } finally {
       setCarregando(false)
     }
+  }
+
+  function descartar() {
+    resetarEstado()
   }
 
   return (
@@ -119,6 +172,11 @@ function App() {
                 pronto
               </span>
             )}
+            {aguardandoAprovacao && !carregando && (
+              <span className="text-xs font-medium text-amber-700">
+                aguardando aprovação
+              </span>
+            )}
           </div>
 
           <div className="relative min-h-[18rem] overflow-hidden rounded-xl border border-stone-200 bg-white shadow-[0_1px_2px_rgba(28,25,23,0.04),0_8px_24px_-12px_rgba(28,25,23,0.12)]">
@@ -131,11 +189,20 @@ function App() {
                 <p className="text-sm text-red-700">{erro}</p>
               )}
 
-              {!carregando && !erro && !briefing && (
+              {!carregando && !erro && aguardandoAprovacao && (
+                <PreviewAprovacao
+                  noticias={pendente.noticias}
+                  memoria={pendente.memoria}
+                  onAprovar={aprovarEContinuar}
+                  onDescartar={descartar}
+                />
+              )}
+
+              {!carregando && !erro && !aguardandoAprovacao && !briefing && (
                 <EmptyState />
               )}
 
-              {!carregando && !erro && briefing && (
+              {!carregando && !erro && !aguardandoAprovacao && briefing && (
                 <>
                   <article className="font-serif whitespace-pre-wrap text-[17px] leading-[1.7] text-stone-800">
                     {briefing}
@@ -241,6 +308,50 @@ function Spinner() {
         d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
       />
     </svg>
+  )
+}
+
+function PreviewAprovacao({ noticias, memoria, onAprovar, onDescartar }) {
+  return (
+    <div>
+      <div className="mb-4 flex flex-wrap items-center gap-x-2 text-[11px] uppercase tracking-wider text-stone-400">
+        <span className="font-medium text-amber-700">Notícias coletadas</span>
+        <span className="text-stone-300">·</span>
+        <span>revise antes de gerar o briefing</span>
+        {memoria && (
+          <>
+            <span className="text-stone-300">·</span>
+            <span>
+              {memoria.briefings_anteriores_consultados} briefing
+              {memoria.briefings_anteriores_consultados === 1 ? '' : 's'} anterior
+              {memoria.briefings_anteriores_consultados === 1 ? '' : 'es'}
+            </span>
+          </>
+        )}
+      </div>
+
+      <article className="max-h-80 overflow-y-auto whitespace-pre-wrap rounded-md border border-stone-100 bg-stone-50/50 p-4 font-serif text-[15px] leading-[1.6] text-stone-700">
+        {noticias || '(nenhuma notícia coletada)'}
+      </article>
+
+      <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+        <button
+          type="button"
+          onClick={onDescartar}
+          className="inline-flex items-center justify-center rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-600 transition hover:bg-stone-50"
+        >
+          Descartar
+        </button>
+        <button
+          type="button"
+          onClick={onAprovar}
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-700 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-800"
+        >
+          Aprovar e gerar briefing
+          <ArrowIcon />
+        </button>
+      </div>
+    </div>
   )
 }
 

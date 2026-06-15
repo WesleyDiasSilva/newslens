@@ -1,5 +1,7 @@
 import os
 import time
+import uuid
+from typing import Optional
 
 from anthropic import Anthropic
 from dotenv import load_dotenv
@@ -125,6 +127,17 @@ class BriefingRequest(BaseModel):
         return v
 
 
+class RetomarRequest(BaseModel):
+    thread_id: str
+
+    @field_validator("thread_id")
+    @classmethod
+    def _thread_id_nao_vazio(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("thread_id não pode ser vazio")
+        return v
+
+
 def extrair_texto(response) -> str:
     partes: list[str] = []
     for bloco in response.content:
@@ -165,6 +178,7 @@ def _montar_contexto_historico(briefings: list[dict]) -> str:
 
 
 from graph import build_graph, langfuse_handler
+from langgraph.types import Command
 
 graph = build_graph()
 
@@ -177,20 +191,45 @@ _MEMORIA_FALLBACK = {
 }
 
 
+def _extrair_payload_interrupt(resultado: dict) -> Optional[dict]:
+    """Devolve o dict passado a interrupt() se o grafo pausou; senão None."""
+    interrupts = resultado.get("__interrupt__")
+    if not interrupts:
+        return None
+    primeiro = interrupts[0]
+    valor = getattr(primeiro, "value", primeiro)
+    return valor if isinstance(valor, dict) else {"valor": valor}
+
+
 @app.post("/api/briefing")
 def criar_briefing(req: BriefingRequest):
     inicio = time.perf_counter()
 
+    thread_id = f"{req.tema}::{uuid.uuid4().hex[:12]}"
+    config = {
+        "configurable": {"thread_id": thread_id},
+        "callbacks": [langfuse_handler],
+    }
     input_state = {"tema": req.tema, "num_chamadas": 0}
-    resultado = graph.invoke(
-        input_state,
-        config={
-            "configurable": {"thread_id": req.tema},
-            "callbacks": [langfuse_handler],
-        },
-    )
+    resultado = graph.invoke(input_state, config=config)
 
     tempo_ms = int((time.perf_counter() - inicio) * 1000)
+
+    payload_interrupt = _extrair_payload_interrupt(resultado)
+    if payload_interrupt is not None:
+        memoria_out = payload_interrupt.get("memoria") or dict(_MEMORIA_FALLBACK)
+        print(
+            f"[briefing] tema={req.tema!r} status=aguardando_aprovacao "
+            f"thread_id={thread_id} tempo_ms={tempo_ms}",
+            flush=True,
+        )
+        return {
+            "status": "aguardando_aprovacao",
+            "noticias": payload_interrupt.get("noticias", ""),
+            "thread_id": thread_id,
+            "tempo_ms": tempo_ms,
+            "memoria": memoria_out,
+        }
 
     memoria_out = resultado.get("memoria") or dict(_MEMORIA_FALLBACK)
     num_chamadas = resultado.get("num_chamadas", 0)
@@ -198,6 +237,41 @@ def criar_briefing(req: BriefingRequest):
     print(
         f"[briefing] tema={req.tema!r} chamadas={num_chamadas} "
         f"briefings_anteriores={memoria_out.get('briefings_anteriores_consultados', 0)} "
+        f"disponivel={memoria_out.get('disponivel', False)} tempo_ms={tempo_ms}",
+        flush=True,
+    )
+
+    return {
+        "briefing": resultado.get("briefing", ""),
+        "tempo_ms": tempo_ms,
+        "num_chamadas": num_chamadas,
+        "memoria": memoria_out,
+    }
+
+
+@app.post("/api/briefing/retomar")
+def retomar_briefing(req: RetomarRequest):
+    inicio = time.perf_counter()
+    config = {
+        "configurable": {"thread_id": req.thread_id},
+        "callbacks": [langfuse_handler],
+    }
+
+    snapshot = graph.get_state(config)
+    if not snapshot.next:
+        raise HTTPException(
+            status_code=404,
+            detail=f"thread_id desconhecido ou já concluído: {req.thread_id}",
+        )
+
+    resultado = graph.invoke(Command(resume="aprovado"), config=config)
+    tempo_ms = int((time.perf_counter() - inicio) * 1000)
+
+    memoria_out = resultado.get("memoria") or dict(_MEMORIA_FALLBACK)
+    num_chamadas = resultado.get("num_chamadas", 0)
+
+    print(
+        f"[retomar] thread_id={req.thread_id} chamadas={num_chamadas} "
         f"disponivel={memoria_out.get('disponivel', False)} tempo_ms={tempo_ms}",
         flush=True,
     )

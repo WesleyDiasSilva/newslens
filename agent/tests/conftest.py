@@ -85,7 +85,39 @@ def reset_memory():
             store.clear()
 
 
+def fluxo_completo(client, tema: str) -> dict:
+    """Executa /api/briefing (pausa HITL) + /api/briefing/retomar.
+
+    Helper compartilhado pelos testes que esperam o briefing final num
+    único call — após a introdução do interrupt, o fluxo passou a ser dual,
+    e usar esse helper isola os testes legados dessa mudança.
+
+    Devolve o body do retomar, mas substitui `memoria` pela snapshot da
+    pausa — os testes legados consideram canônica a contagem ANTES do
+    salvar_briefing deste run.
+    """
+    pausa = client.post("/api/briefing", json={"tema": tema})
+    assert pausa.status_code == 200, pausa.text
+    body_pausa = pausa.json()
+    assert body_pausa.get("status") == "aguardando_aprovacao", body_pausa
+    thread_id = body_pausa["thread_id"]
+
+    retoma = client.post("/api/briefing/retomar", json={"thread_id": thread_id})
+    assert retoma.status_code == 200, retoma.text
+    body = retoma.json()
+    body["memoria"] = body_pausa.get("memoria", body.get("memoria"))
+    return body
+
+
 @pytest.fixture
 def client():
     with TestClient(main.app) as c:
         yield c
+
+
+@pytest.fixture
+def briefing_completo(client):
+    """Fixture-wrapper de `fluxo_completo` — passa `client` automaticamente."""
+    def _call(tema: str) -> dict:
+        return fluxo_completo(client, tema)
+    return _call
