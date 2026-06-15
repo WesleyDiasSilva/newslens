@@ -164,7 +164,7 @@ def _montar_contexto_historico(briefings: list[dict]) -> str:
     return "Briefings anteriores sobre este tema:\n\n" + "\n\n".join(blocos)
 
 
-from graph import build_graph
+from graph import build_graph, langfuse_handler
 
 graph = build_graph()
 
@@ -182,8 +182,13 @@ def criar_briefing(req: BriefingRequest):
     inicio = time.perf_counter()
 
     input_state = {"tema": req.tema, "num_chamadas": 0}
-    config = {"configurable": {"thread_id": req.tema}}
-    resultado = graph.invoke(input_state, config=config)
+    resultado = graph.invoke(
+        input_state,
+        config={
+            "configurable": {"thread_id": req.tema},
+            "callbacks": [langfuse_handler],
+        },
+    )
 
     tempo_ms = int((time.perf_counter() - inicio) * 1000)
 

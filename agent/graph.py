@@ -14,7 +14,11 @@ from typing import Annotated, TypedDict
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
+from langfuse.langchain import CallbackHandler
+
 import main
+
+langfuse_handler = CallbackHandler()
 
 
 class NewsLensState(TypedDict):
