@@ -15,6 +15,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 
+from langfuse import observe
 from langfuse.langchain import CallbackHandler
 
 import main
@@ -42,6 +43,7 @@ SEARCH_SYSTEM = (
 QUALIDADE_MINIMA_CHARS = 2500
 
 
+@observe(as_type="span")
 def buscar_noticias(state: NewsLensState) -> dict:
     instrucao = (
         f"Tema: {state['tema']}\n\n"
@@ -51,12 +53,14 @@ def buscar_noticias(state: NewsLensState) -> dict:
     return {"noticias": noticias, "num_chamadas": 1}
 
 
+@observe(as_type="span")
 def avaliar_qualidade(state: NewsLensState) -> dict:
     resultado = len(state.get("noticias", "")) >= QUALIDADE_MINIMA_CHARS
     print(f"[grafo] avaliar_qualidade: {len(state.get('noticias', ''))} chars → {'suficiente' if resultado else 'insuficiente'}")
     return {"qualidade_suficiente": resultado}
 
 
+@observe(as_type="span")
 def refinar_busca(state: NewsLensState) -> dict:
     print(f"[grafo] refinar_busca: refinando busca para '{state['tema']} últimas notícias'")
     instrucao = (
@@ -67,6 +71,7 @@ def refinar_busca(state: NewsLensState) -> dict:
     return {"noticias": noticias, "num_chamadas": 1}
 
 
+@observe(as_type="span")
 def recuperar_historico(state: NewsLensState) -> dict:
     tema = state["tema"]
     try:
@@ -103,6 +108,7 @@ def recuperar_historico(state: NewsLensState) -> dict:
     return update
 
 
+@observe(as_type="span")
 def gerar_briefing(state: NewsLensState) -> dict:
     historico = state.get("historico") or []
     if historico:
@@ -124,6 +130,7 @@ def gerar_briefing(state: NewsLensState) -> dict:
     return {"briefing": briefing, "num_chamadas": 1}
 
 
+@observe(as_type="span")
 def salvar_briefing(state: NewsLensState) -> dict:
     try:
         main.memory_store.add(state["tema"], state["briefing"])

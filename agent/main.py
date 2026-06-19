@@ -177,10 +177,12 @@ def _montar_contexto_historico(briefings: list[dict]) -> str:
     return "Briefings anteriores sobre este tema:\n\n" + "\n\n".join(blocos)
 
 
-from graph import build_graph, langfuse_handler
+from graph import build_graph
+from langfuse import get_client
 from langgraph.types import Command
 
 graph = build_graph()
+langfuse_client = get_client()
 
 
 _MEMORIA_FALLBACK = {
@@ -206,12 +208,17 @@ def criar_briefing(req: BriefingRequest):
     inicio = time.perf_counter()
 
     thread_id = f"{req.tema}::{uuid.uuid4().hex[:12]}"
-    config = {
-        "configurable": {"thread_id": thread_id},
-        "callbacks": [langfuse_handler],
-    }
+    config = {"configurable": {"thread_id": thread_id}}
     input_state = {"tema": req.tema, "num_chamadas": 0}
-    resultado = graph.invoke(input_state, config=config)
+    with langfuse_client.start_as_current_observation(
+        name=f"briefing — {req.tema}",
+        as_type="chain",
+    ) as chain_obs:
+        langfuse_client._create_trace_tags_via_ingestion(
+            trace_id=chain_obs.trace_id,
+            tags=["busca-inicial"],
+        )
+        resultado = graph.invoke(input_state, config=config)
 
     tempo_ms = int((time.perf_counter() - inicio) * 1000)
 
@@ -252,10 +259,8 @@ def criar_briefing(req: BriefingRequest):
 @app.post("/api/briefing/retomar")
 def retomar_briefing(req: RetomarRequest):
     inicio = time.perf_counter()
-    config = {
-        "configurable": {"thread_id": req.thread_id},
-        "callbacks": [langfuse_handler],
-    }
+    tema_do_thread = req.thread_id.split("::")[0]
+    config = {"configurable": {"thread_id": req.thread_id}}
 
     snapshot = graph.get_state(config)
     if not snapshot.next:
@@ -264,7 +269,15 @@ def retomar_briefing(req: RetomarRequest):
             detail=f"thread_id desconhecido ou já concluído: {req.thread_id}",
         )
 
-    resultado = graph.invoke(Command(resume="aprovado"), config=config)
+    with langfuse_client.start_as_current_observation(
+        name=f"briefing aprovado — {tema_do_thread}",
+        as_type="chain",
+    ) as chain_obs:
+        langfuse_client._create_trace_tags_via_ingestion(
+            trace_id=chain_obs.trace_id,
+            tags=["aprovacao-humana"],
+        )
+        resultado = graph.invoke(Command(resume="aprovado"), config=config)
     tempo_ms = int((time.perf_counter() - inicio) * 1000)
 
     memoria_out = resultado.get("memoria") or dict(_MEMORIA_FALLBACK)
