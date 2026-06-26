@@ -214,10 +214,7 @@ def criar_briefing(req: BriefingRequest):
         name=f"briefing — {req.tema}",
         as_type="chain",
     ) as chain_obs:
-        langfuse_client._create_trace_tags_via_ingestion(
-            trace_id=chain_obs.trace_id,
-            tags=["busca-inicial"],
-        )
+        chain_obs.update_trace(tags=["busca-inicial"])
         resultado = graph.invoke(input_state, config=config)
 
     tempo_ms = int((time.perf_counter() - inicio) * 1000)
@@ -273,10 +270,7 @@ def retomar_briefing(req: RetomarRequest):
         name=f"briefing aprovado — {tema_do_thread}",
         as_type="chain",
     ) as chain_obs:
-        langfuse_client._create_trace_tags_via_ingestion(
-            trace_id=chain_obs.trace_id,
-            tags=["aprovacao-humana"],
-        )
+        chain_obs.update_trace(tags=["aprovacao-humana"])
         resultado = graph.invoke(Command(resume="aprovado"), config=config)
     tempo_ms = int((time.perf_counter() - inicio) * 1000)
 
