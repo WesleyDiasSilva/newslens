@@ -7,6 +7,6 @@ httpx
 pgvector
 psycopg2-binary
 openai
-langgraph
-langchain
-langfuse
+langgraph==0.6.11
+langchain==0.3.30
+langfuse==3.7.0
