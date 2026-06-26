@@ -2,13 +2,14 @@
 
 Fluxo:
     START → buscar_noticias → avaliar_qualidade → (conditional)
-      ├─ qualidade_suficiente=True  → recuperar_historico → gerar_briefing → salvar_briefing → END
-      └─ qualidade_suficiente=False → refinar_busca → recuperar_historico → gerar_briefing → salvar_briefing → END
+      ├─ qualidade_suficiente=True  → sanitizar_noticias → recuperar_historico → gerar_briefing → salvar_briefing → END
+      └─ qualidade_suficiente=False → refinar_busca → sanitizar_noticias → recuperar_historico → gerar_briefing → salvar_briefing → END
 
 A camada de memória é acessada via `main.memory_store` (handle único,
 patchável em testes) — não importa de `memory.py` direto.
 """
 import operator
+import re
 from typing import Annotated, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -21,6 +22,19 @@ from langfuse.langchain import CallbackHandler
 import main
 
 langfuse_handler = CallbackHandler()
+
+
+# Padrões comuns de injeção indireta (didático — não exaustivo).
+PADROES_INJECAO = [
+    r"(?i)\bignore\b.{0,30}\binstru",
+    r"(?i)\bdesconsidere\b.{0,30}\binstru",
+    r"(?i)\bdisregard\b.{0,30}\binstruct",
+    r"(?i)\besque(ç|c)a\b.{0,30}(instru|tudo|acima)",
+    r"(?i)\byou are now\b",
+    r"(?i)a partir de agora,? (você|voce)",
+    r"(?i)^\s*(system|assistant)\s*:",
+    r"(?i)(envie|mande|anexe|poste).{0,40}(http|url|endere(ç|c)o)",
+]
 
 
 class NewsLensState(TypedDict):
@@ -58,6 +72,19 @@ def avaliar_qualidade(state: NewsLensState) -> dict:
     resultado = len(state.get("noticias", "")) >= QUALIDADE_MINIMA_CHARS
     print(f"[grafo] avaliar_qualidade: {len(state.get('noticias', ''))} chars → {'suficiente' if resultado else 'insuficiente'}")
     return {"qualidade_suficiente": resultado}
+
+
+@observe(as_type="span")
+def sanitizar_noticias(state: NewsLensState) -> dict:
+    bruto = state.get("noticias", "") or ""
+    limpas, removidas = [], 0
+    for linha in bruto.splitlines():
+        if any(re.search(p, linha) for p in PADROES_INJECAO):
+            removidas += 1
+            continue
+        limpas.append(linha)
+    print(f"[grafo] sanitizar_noticias: {removidas} linha(s) suspeita(s) removida(s)")
+    return {"noticias": "\n".join(limpas)}
 
 
 @observe(as_type="span")
@@ -142,7 +169,7 @@ def salvar_briefing(state: NewsLensState) -> dict:
 
 def route_qualidade(state: NewsLensState) -> str:
     return (
-        "recuperar_historico"
+        "sanitizar_noticias"
         if state.get("qualidade_suficiente")
         else "refinar_busca"
     )
@@ -153,6 +180,7 @@ def build_graph():
 
     builder.add_node("buscar_noticias", buscar_noticias)
     builder.add_node("avaliar_qualidade", avaliar_qualidade)
+    builder.add_node("sanitizar_noticias", sanitizar_noticias)
     builder.add_node("refinar_busca", refinar_busca)
     builder.add_node("recuperar_historico", recuperar_historico)
     builder.add_node("gerar_briefing", gerar_briefing)
@@ -164,11 +192,12 @@ def build_graph():
         "avaliar_qualidade",
         route_qualidade,
         {
-            "recuperar_historico": "recuperar_historico",
+            "sanitizar_noticias": "sanitizar_noticias",
             "refinar_busca": "refinar_busca",
         },
     )
-    builder.add_edge("refinar_busca", "recuperar_historico")
+    builder.add_edge("refinar_busca", "sanitizar_noticias")
+    builder.add_edge("sanitizar_noticias", "recuperar_historico")
     builder.add_edge("recuperar_historico", "gerar_briefing")
     builder.add_edge("gerar_briefing", "salvar_briefing")
     builder.add_edge("salvar_briefing", END)

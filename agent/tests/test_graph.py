@@ -24,11 +24,11 @@ class TestState:
 
 
 class TestRouteQualidade:
-    def test_qualidade_suficiente_vai_pra_recuperar_historico(self):
+    def test_qualidade_suficiente_vai_pra_sanitizar_noticias(self):
         from graph import route_qualidade
 
         resultado = route_qualidade({"qualidade_suficiente": True})
-        assert resultado == "recuperar_historico"
+        assert resultado == "sanitizar_noticias"
 
     def test_qualidade_insuficiente_vai_pra_refinar_busca(self):
         from graph import route_qualidade

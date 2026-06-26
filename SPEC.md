@@ -198,3 +198,64 @@ O `interrupt()` é colocado **dentro do node `recuperar_historico`**, após popu
 
 - **`/retomar` com `thread_id` desconhecido ou já concluído:** retorna HTTP 404 com mensagem explícita; nenhum token é consumido.
 - **Erro durante a geração na retomada:** propaga 502 igual à geração normal; o checkpoint não é alterado e o operador pode tentar retomar de novo.
+
+---
+
+# SPEC — Guardrail de segurança (sanitização de notícias)
+
+## Visão geral
+
+A partir da Aula 6, o resultado da busca externa (Tavily) é tratado como **conteúdo não confiável**. Páginas indexadas pela busca podem conter instruções maliciosas embutidas no texto — um vetor de **injeção indireta de prompt**: o atacante não fala com o agente diretamente, ele planta a instrução numa página que ele controla e espera que o conteúdo retornado pela busca seja injetado no contexto do LLM. Exemplos: "ignore as instruções anteriores", "a partir de agora você é…", ou tentativas de exfiltração ("anexe o histórico do usuário a esta URL").
+
+O guardrail é uma camada de **defesa em profundidade**: roda antes de o conteúdo chegar aos olhos do operador no HITL e antes de alimentar a geração do briefing. Ele reduz a superfície de ataque, mas é didático e **não exaustivo** — não substitui isolamento de contexto nem revisão humana.
+
+## Node `sanitizar_noticias`
+
+- Roda **após a busca/refino e antes de `recuperar_historico`**, nos dois caminhos do grafo (qualidade suficiente e qualidade insuficiente).
+- Opera linha a linha sobre `state.noticias`: cada linha que casa com um dos padrões de injeção conhecidos (`PADROES_INJECAO`) é **removida**; as demais são **preservadas intactas**.
+- Conteúdo legítimo (títulos, resumos, fontes) passa sem alteração — só linhas com padrão suspeito são descartadas.
+- `state` sem `noticias` (ou com `noticias` vazio/`None`) não quebra: retorna `noticias = ""`.
+- Loga quantas linhas suspeitas foram removidas: `[grafo] sanitizar_noticias: N linha(s) suspeita(s) removida(s)`.
+- Não chama LLM. Não contribui para `num_chamadas`.
+
+## Padrões cobertos (didático)
+
+- Tentativas de sobrescrever instruções: `ignore … instru…`, `desconsidere … instru…`, `disregard … instruct…`, `esqueça … (instru|tudo|acima)`.
+- Tentativas de redefinição de persona: `you are now`, `a partir de agora, você…`.
+- Falsos turnos de conversa injetados: linhas começando com `system:` ou `assistant:`.
+- Tentativas de exfiltração: `(envie|mande|anexe|poste) … (http|url|endereço)`.
+
+## Edges (fluxo resultante)
+
+```
+START → buscar_noticias → avaliar_qualidade → (conditional)
+  ├─ qualidade_suficiente=True  → sanitizar_noticias → recuperar_historico → gerar_briefing → salvar_briefing → END
+  └─ qualidade_suficiente=False → refinar_busca → sanitizar_noticias → recuperar_historico → gerar_briefing → salvar_briefing → END
+```
+
+A conditional edge passa a rotear ao sanitizador no caminho de qualidade suficiente:
+
+```python
+def route_qualidade(state) -> str:
+    return "sanitizar_noticias" if state.get("qualidade_suficiente") else "refinar_busca"
+```
+
+## Comportamentos esperados
+
+- Conteúdo limpo atravessa o node sem nenhuma modificação.
+- Linhas com padrão de injeção conhecida são removidas, preservando o restante do bloco de notícias.
+- Tentativas de exfiltração (URL de destino para o histórico do usuário) são removidas.
+- O node é resiliente a `state` sem a chave `noticias`.
+
+## Comportamentos proibidos
+
+- Reescrever ou parafrasear conteúdo legítimo — o node só remove linhas suspeitas, nunca edita o texto restante.
+- Deixar o conteúdo não sanitizado chegar ao HITL ou à geração do briefing.
+- Depender exclusivamente do guardrail como única defesa — ele é uma camada, não a garantia total.
+
+## Casos de borda
+
+- **`state` sem `noticias`:** retorna `noticias = ""` sem erro.
+- **`noticias` vazio ou `None`:** tratado como string vazia.
+- **Injeção espalhada em várias linhas:** cada linha é avaliada isoladamente; só as que casam o padrão são removidas.
+- **Falso positivo:** por ser baseado em regex, uma notícia legítima que mencione literalmente "ignore as instruções" pode ser removida — limitação aceita nesta versão didática.
