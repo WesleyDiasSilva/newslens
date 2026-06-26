@@ -1,0 +1,12 @@
+[
+  {
+    "tema": "inteligência artificial",
+    "noticias": "Título: UE aprova lei de IA. Resumo: parlamento aprova marco regulatório. Fonte: https://ex.com/ue",
+    "briefing": "## 1. UE aprova marco de IA\nO parlamento europeu aprovou novas regras para sistemas de IA. Fonte: https://ex.com/ue\n\n## 2. Modelo aberto competitivo\nLançado modelo open-source de alto desempenho. Fonte: https://ex.com/modelo"
+  },
+  {
+    "tema": "energia renovável",
+    "noticias": "Título: solar cresce. Resumo: capacidade instalada sobe 30%. Fonte: https://ex.com/solar",
+    "briefing": "## 1. Energia solar bate recorde\nCapacidade instalada cresceu 30% no ano. Fonte: https://ex.com/solar\n\n## 2. Eólica offshore avança\nNovos parques aprovados na costa. Fonte: https://ex.com/eolica"
+  }
+]
